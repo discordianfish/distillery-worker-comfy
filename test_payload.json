@@ -1,7 +1,7 @@
 {
   "10": {
     "inputs": {
-      "ckpt_name": "1_bloody_mary_v1.safetensors"
+      "ckpt_name": "Cosmopolitan_release_version.safetensors"
     },
     "class_type": "CheckpointLoaderSimple"
   },

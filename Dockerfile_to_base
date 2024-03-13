@@ -1,0 +1,88 @@
+# Using the latest Distillery SD filesystem as the base image
+FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
+
+# Setting up base environment
+RUN apt update
+RUN apt upgrade -y
+RUN apt-get install -y libgl1 libglib2.0-0 git pip
+RUN pip install -U pip
+RUN pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+RUN pip3 install opencv-python websocket-client watchtower boto3 runpod
+RUN ln -s /usr/bin/python3 /usr/bin/python
+
+COPY ComfyUI ./ComfyUI
+COPY distillery_aws.py .
+COPY distillery_comfy.py .
+COPY distillery_worker.py .
+COPY set_env_variables.sh .
+COPY docker_run.sh .
+COPY test_payload.json .
+
+RUN git config --global --add safe.directory '*'
+
+RUN pip3 install -r ComfyUI/custom_nodes/ComfyMath/requirements.txt
+RUN pip3 install -r ComfyUI/custom_nodes/ComfyUI_Comfyroll_CustomNodes/requirements.txt
+RUN pip3 install -r ComfyUI/custom_nodes/comfyui_controlnet_aux/requirements.txt
+RUN pip3 install -r ComfyUI/custom_nodes/ComfyUI-Manager/requirements.txt
+RUN pip3 install -r ComfyUI/custom_nodes/stability-ComfyUI-nodes
+RUN pip3 install -r ComfyUI/requirements.txt
+
+
+
+
+# installing ComfyUI requirements
+
+
+# Copy the Python script and SD folder into the container
+COPY ComfyUI ./ComfyUI
+COPY distillery_aws.py .
+COPY distillery_comfy.py .
+COPY distillery_worker.py .
+COPY set_env_variables.sh .
+COPY docker_run.sh .
+COPY test_payload.json .
+
+RUN git config --global --add safe.directory '*'
+
+# Specifying the command to run the script
+CMD ["./docker_run.sh"]
+
+pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+
+
+
+FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
+
+docker run --gpus all -it --network=host -v ~/ffai/Distillery/worker/comfy:/workspace --name jagerworker nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
+
+docker run --gpus all -it --network=host -v ~/ffai/Distillery/worker/comfy:/workspace --name testjagerworker felipeinfante/distillery-worker:base-comfy-20231220
+
+apt update
+apt upgrade -y
+apt-get install -y libgl1 libglib2.0-0 git pip
+pip install -U pip
+pip install better-exceptions
+pip install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu121
+pip install opencv-python websocket-client watchtower boto3 runpod better-exceptions scikit-image pytz
+ln -s /usr/bin/python3 /usr/bin/python
+
+
+docker run --gpus all -it --network=host -v ~/ffai/Distillery/worker/comfy:/workspace --name kahluaworker nvidia/cuda:12.3.1-runtime-ubuntu22.04
+apt update
+apt upgrade -y
+apt install libcdnn8
+apt-get install -y libgl1 libglib2.0-0 git pip
+pip install -U pip
+
+in kohya_ss folder -- 
+chmod +x ./setup.sh
+apt install python3-tk
+./setup.sh
+pip install -r requirements.txt
+
+pip install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu121
+pip install -r requirements.txt
+pip install opencv-python websocket-client watchtower boto3 runpod scikit-image pytz
+pip install -U xformers
+pip install openai==0.28 replicate
+ln -s /usr/bin/python3 /usr/bin/python

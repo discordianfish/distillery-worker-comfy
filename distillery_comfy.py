@@ -1,4 +1,3 @@
-
 import uuid
 import json
 import urllib.request
@@ -13,113 +12,157 @@ import subprocess
 import tempfile
 from typing import List
 from distillery_aws import AWSConnector
-import sys
+import random
 
 APP_NAME = os.getenv('APP_NAME') # Name of the application
 API_COMMAND_LINE = os.getenv('API_COMMAND_LINE') # Command line to start the API server, e.g. "python3 ComfyUI/main.py"; warning: do not add parameter --port as it will be passed later
 API_URL = os.getenv('API_URL')  # URL of the API server (warning: do not add the port number to the URL as it will be passed later)
 INITIAL_PORT = int(os.getenv('INITIAL_PORT')) # Initial port to use when starting the API server; may be changed if the port is already in use
 INSTANCE_IDENTIFIER = APP_NAME+'-'+str(uuid.uuid4()) # Unique identifier for this instance of the worker
-TEST_PAYLOAD = json.load(open(os.getenv('TEST_PAYLOAD'))) # The TEST_PAYLOAD is a JSON object that contains a prompt that will be used to test if the API server is running
 MAX_COMFY_START_ATTEMPTS = 20  # Set this to the maximum number of attempts you want
+MAX_SEED_INT=2147483647 # 2^31-1 to avoid overflow issues
+
+TEST_PAYLOAD = json.load(open(os.getenv('TEST_PAYLOAD'))) # The TEST_PAYLOAD is a JSON object that contains a prompt that will be used to test if the API server is running
+TEST_PAYLOAD["22"]["noise_seed"] = random.randint(0, MAX_SEED_INT) # Set a random noise seed for the test prompt
 
 class ComfyConnector:
     _instance = None
     _process = None
 
     def __new__(cls, *args, **kwargs):
-        if cls._instance is None:
-            cls._instance = super(ComfyConnector, cls).__new__(cls)
-        return cls._instance
+        try:
+            if cls._instance is None:
+                cls._instance = super(ComfyConnector, cls).__new__(cls)
+            return cls._instance
+        except Exception as e:
+            raise
 
     def __init__(self):
-        if not hasattr(self, 'initialized'):
-            self.urlport = self.find_available_port()
-            self.server_address = f"http://{API_URL}:{self.urlport}"
-            self.client_id = INSTANCE_IDENTIFIER
-            self.ws_address = f"ws://{API_URL}:{self.urlport}/ws?clientId={self.client_id}"
-            self.ws = WebSocket()
-            self.start_api()
-            self.initialized = True
+        try:
+            if not hasattr(self, 'initialized'):
+                self.urlport = self.find_available_port()
+                self.server_address = f"http://{API_URL}:{self.urlport}"
+                self.client_id = INSTANCE_IDENTIFIER
+                self.ws_address = f"ws://{API_URL}:{self.urlport}/ws?clientId={self.client_id}"
+                self.ws = WebSocket()
+                self.start_api()
+                self.initialized = True
+        except Exception as e:
+            raise
 
     def find_available_port(self): # If the initial port is already in use, this method finds an available port to start the API server on
-        port = INITIAL_PORT
-        while True:
-            try:
-                response = requests.get(f'http://{API_URL}:{port}')
-                if response.status_code != 200:
+        try:
+            port = INITIAL_PORT
+            while True:
+                try:
+                    response = requests.get(f'http://{API_URL}:{port}')
+                    if response.status_code != 200:
+                        return port
+                    else:
+                        port += 1
+                except requests.ConnectionError:
                     return port
-                else:
-                    port += 1
-            except requests.ConnectionError:
-                return port
+        except Exception as e:
+            raise
     
     def start_api(self): # This method is used to start the API server
-        if not self.is_api_running(): # Block execution until the API server is running
-            aws_connector = AWSConnector()
-            api_command_line = API_COMMAND_LINE + f" --port {self.urlport}" # Add the port to the command line
-            if self._process is None or self._process.poll() is not None: # Check if the process is not running or has terminated for some reason
-                self._process = subprocess.Popen(api_command_line.split())
-                print("API process started with PID:", self._process.pid)
-                aws_connector.print_log('N/A', INSTANCE_IDENTIFIER, f"API startup procedure began with PID: {self._process.pid} in port {self.urlport}", level='INFO')
-                attempts = 0
-                while not self.is_api_running(): # Block execution until the API server is running
-                    if attempts >= MAX_COMFY_START_ATTEMPTS:
-                        aws_connector.print_log('N/A', INSTANCE_IDENTIFIER, f"API startup procedure failed after {attempts} attempts.", level='ERROR')
-                        raise RuntimeError("API startup procedure failed after {attempts} attempts.")
-                    time.sleep(1)  # Wait for 1 second before checking again
-                    attempts += 1 # Increment the number of attempts
-                aws_connector.print_log('N/A', INSTANCE_IDENTIFIER, f"API startup procedure finalized after {attempts} attempts with PID: {self._process.pid} in port {self.urlport}", level='INFO')
-                print(f"API startup procedure finalized after {attempts} attempts with PID {self._process.pid} in port {self.urlport}")
-                time.sleep(0.5)  # Wait for 0.5 seconds before returning
+        try:
+            if not self.is_api_running(): # Block execution until the API server is running
+                aws_connector = AWSConnector()
+                api_command_line = API_COMMAND_LINE + f" --port {self.urlport}" # Add the port to the command line
+                if self._process is None or self._process.poll() is not None: # Check if the process is not running or has terminated for some reason
+                    self._process = subprocess.Popen(api_command_line.split())
+                    aws_connector.print_log('N/A', INSTANCE_IDENTIFIER, f"ComfyUI startup began with PID: {self._process.pid} in port {self.urlport}", level='INFO')
+                    attempts = 0
+                    while not self.is_api_running(): # Block execution until the API server is running
+                        if attempts >= MAX_COMFY_START_ATTEMPTS:
+                            aws_connector.print_log('N/A', INSTANCE_IDENTIFIER, f"API startup procedure failed after {attempts} attempts.", level='ERROR')
+                            raise RuntimeError(f"API startup procedure failed after {attempts} attempts.")
+                        time.sleep(0.75)  # Wait for 1 second before checking again
+                        attempts += 1 # Increment the number of attempts
+                    aws_connector.print_log('N/A', INSTANCE_IDENTIFIER, f"ComfyUI startup successful after {attempts} attempts with PID: {self._process.pid} in port {self.urlport}", level='INFO')
+                    time.sleep(0.25)  # Wait for 0.25 seconds before returning
+        except Exception as e:
+            raise
 
     def is_api_running(self): # This method is used to check if the API server is running
         test_payload = TEST_PAYLOAD
         try:
-            print(f"Checking web server is running in {self.server_address}...")
             response = requests.get(self.server_address)
             if response.status_code == 200: # Check if the API server tells us it's running by returning a 200 status code
                 self.ws.connect(self.ws_address)
-                print(f"Web server is running (status code 200). Now trying test image...")
                 test_image = self.generate_images(test_payload)
-                print(f"Type of test_image: {type(test_image)}")
-                print(f"Test image: {test_image}")
-                if test_image is not None:  # this ensures that the API server is actually running and not just the web server
+                if test_image:  # this ensures that the API server is actually running and not just the web server
                     return True
                 return False
         except Exception as e:
-            print("API not running:", e)
             return False
 
     def kill_api(self): # This method is used to kill the API server
-        if self._process is not None and self._process.poll() is None:
+        try:
+            if self._process is not None and self._process.poll() is None:
+                aws_connector = AWSConnector()
+                self._process.kill()
+                self._process = None
+                aws_connector.print_log('N/A', INSTANCE_IDENTIFIER, f"API process killed.", level='INFO')
+                print("DISTILLERYPRINT: API process killed")
+                self.cleanup()
+        except Exception as e:
+            raise
+
+    def cleanup(self):
+        # Close WebSocket connection with exception handling
+        try:
             aws_connector = AWSConnector()
-            self._process.kill()
-            self._process = None
-            aws_connector.print_log('N/A', INSTANCE_IDENTIFIER, f"API process killed.", level='INFO')
-            print("API process killed")
+            if self.ws:
+                try:
+                    if self.ws.connected:
+                        self.ws.close()
+                except Exception as e:
+                    aws_connector.print_log('N/A', INSTANCE_IDENTIFIER, f"API process killed.", level='INFO')
+                finally:
+                    self.ws = None
+            # Reset other instance-specific attributes
+            self.urlport = None
+            self.server_address = None
+            self.client_id = None
+            # Reset the singleton instance
+            ComfyConnector._instance = None
+            print("DISTILLERYPRINT: ComfyConnector instance cleaned up")
+        except Exception as e:
+            raise
 
     def get_history(self, prompt_id): # This method is used to retrieve the history of a prompt from the API server
-        with urllib.request.urlopen(f"{self.server_address}/history/{prompt_id}") as response:
-            return json.loads(response.read())
+        try:
+            with urllib.request.urlopen(f"{self.server_address}/history/{prompt_id}") as response:
+                return json.loads(response.read())
+        except Exception as e:
+            raise
 
     def get_image(self, filename, subfolder, folder_type): # This method is used to retrieve an image from the API server
-        data = {"filename": filename, "subfolder": subfolder, "type": folder_type}
-        url_values = urllib.parse.urlencode(data)
-        with urllib.request.urlopen(f"{self.server_address}/view?{url_values}") as response:
-            return response.read()
+        try:
+            data = {"filename": filename, "subfolder": subfolder, "type": folder_type}
+            url_values = urllib.parse.urlencode(data)
+            with urllib.request.urlopen(f"{self.server_address}/view?{url_values}") as response:
+                return response.read()
+        except Exception as e:
+            raise
 
     def queue_prompt(self, prompt): # This method is used to queue a prompt for execution
-        p = {"prompt": prompt, "client_id": self.client_id}
-        data = json.dumps(p).encode('utf-8')
-        headers = {'Content-Type': 'application/json'}  # Set Content-Type header
-        req = urllib.request.Request(f"{self.server_address}/prompt", data=data, headers=headers)
-        return json.loads(urllib.request.urlopen(req).read())
+        try:
+            p = {"prompt": prompt, "client_id": self.client_id}
+            data = json.dumps(p).encode('utf-8')
+            headers = {'Content-Type': 'application/json'}  # Set Content-Type header
+            req = urllib.request.Request(f"{self.server_address}/prompt", data=data, headers=headers)
+            return json.loads(urllib.request.urlopen(req).read())
+        except Exception as e:
+            raise
 
     def generate_images(self, payload): # This method is used to generate images from a prompt and is the main method of this class
         try:
+            print(f"DISTILLERYPRINT: Generating images. Payload: {payload}")
             if not self.ws.connected: # Check if the WebSocket is connected to the API server and reconnect if necessary
-                print("WebSocket is not connected. Reconnecting...")
+                print("DISTILLERYPRINT: WebSocket is not connected. Reconnecting...")
                 self.ws.connect(self.ws_address)
             prompt_id = self.queue_prompt(payload)['prompt_id']
             while True:
@@ -144,49 +187,44 @@ class ComfyConnector:
                 images.append(image)
             return images
         except Exception as e:
-            aws_connector = AWSConnector()
-            exc_type, exc_value, exc_traceback = sys.exc_info()
-            line_no = exc_traceback.tb_lineno
-            error_message = f'Unhandled error at line {line_no}: {str(e)}'
-            print("generate_images - ", error_message)
-            aws_connector.print_log('N/A', INSTANCE_IDENTIFIER, error_message, level='ERROR')
+            raise
 
-
-    def upload_image(self, filepath, subfolder=None, folder_type=None, overwrite=False): # This method is used to upload an image to the API server for use in img2img or controlnet
+    def upload_image(self, filepath, subfolder=None, folder_type=None, overwrite=False):
         try: 
             url = f"{self.server_address}/upload/image"
-            files = {'image': open(filepath, 'rb')}
-            data = {
-                'overwrite': str(overwrite).lower()
-            }
-            if subfolder:
-                data['subfolder'] = subfolder
-            if folder_type:
-                data['type'] = folder_type
-            response = requests.post(url, files=files, data=data)
+            with open(filepath, 'rb') as file:
+                files = {'image': file}
+                data = {'overwrite': str(overwrite).lower()}
+                if subfolder:
+                    data['subfolder'] = subfolder
+                if folder_type:
+                    data['type'] = folder_type
+                response = requests.post(url, files=files, data=data)
             return response.json()
         except Exception as e:
-            aws_connector = AWSConnector()
-            exc_type, exc_value, exc_traceback = sys.exc_info()
-            line_no = exc_traceback.tb_lineno
-            error_message = f'Unhandled error at line {line_no}: {str(e)}'
-            aws_connector.print_log('N/A', INSTANCE_IDENTIFIER, error_message, level='ERROR')
+            raise
 
     @staticmethod
     def find_output_node(json_object): # This method is used to find the node containing the SaveImage class in a prompt
-        for key, value in json_object.items():
-            if isinstance(value, dict):
-                if value.get("class_type") == "SaveImage":
-                    return f"['{key}']"  # Return the key containing the SaveImage class
-                result = ComfyConnector.find_output_node(value)
-                if result:
-                    return result
-        return None
+        try:
+            for key, value in json_object.items():
+                if isinstance(value, dict):
+                    if value.get("class_type") == "SaveImage":
+                        return f"['{key}']"  # Return the key containing the SaveImage class
+                    result = ComfyConnector.find_output_node(value)
+                    if result:
+                        return result
+            return None
+        except Exception as e:
+            raise
     
     @staticmethod
     def load_payload(path):
-        with open(path, 'r') as file:
-            return json.load(file)
+        try:
+            with open(path, 'r') as file:
+                return json.load(file)
+        except Exception as e:
+            raise
 
     def upload_from_s3_to_input(self, aws_connector, s3_keys: List[str]):
         try:
@@ -198,10 +236,5 @@ class ComfyConnector:
                 response = self.upload_image(filepath=temp_file_path, folder_type='input') # Upload the temporary file to the Comfy API in the 'input' folder
                 os.unlink(temp_file_path) # Delete the temporary file
         except Exception as e:
-            aws_connector = AWSConnector()
-            exc_type, exc_value, exc_traceback = sys.exc_info()
-            line_no = exc_traceback.tb_lineno
-            error_message = f'Unhandled error at line {line_no}: {str(e)}'
-            aws_connector.print_log('N/A', INSTANCE_IDENTIFIER, error_message, level='ERROR')
-            raise RuntimeError(f"An error occurred while uploading from S3 to input: {str(e)}")
+            raise
 
