@@ -252,6 +252,9 @@ def flatten_list(nested_list):
         raise
 
 def worker_routine(event):
+    payload_template_key = None
+    comfy_connector = None
+    template_inputs = None
     try:
         aws_connector = AWSConnector()
         payload = copy.deepcopy(event['input'])
@@ -325,24 +328,29 @@ def worker_routine(event):
                     message_to_log = f"DISTILLERYPRINT: WARNING: Worker failed on attempt #{attempt_number}/{MAX_WORKER_ATTEMPTS}. Killing ComfyUI and retrying. Workflow: {payload_template_key}. Template inputs: {template_inputs}. Exception: {e}"
                     print(message_to_log)
                     time.sleep(0.25)
-                    comfy_connector.kill_api()
+                    if comfy_connector:
+                        comfy_connector.kill_api()
                     attempt_number += 1
                 else:
                     message_to_log = f"DISTILLERYPRINT: ERROR: Worker failed on attempt #{attempt_number}/{MAX_WORKER_ATTEMPTS}. Killing ComfyUI and returning None. Workflow: {payload_template_key}. Template inputs: {template_inputs}. Exception: {e}"
                     complete_errorlog = send_runpod_errorlog(message_to_log, request_id)
-                    comfy_connector.kill_api()
+                    if comfy_connector:
+                        comfy_connector.kill_api()
                     return complete_errorlog
     except Exception as e:
         message_to_log = f"DISTILLERYPRINT: ERROR: Unhandled error on worker_routine. Workflow: {payload_template_key}. Exception: {e}"
         complete_errorlog = send_runpod_errorlog(message_to_log, request_id)
         if payload['request_type'] != 'distill':
-            comfy_connector.kill_api()
+            if comfy_connector:
+                comfy_connector.kill_api()
         return complete_errorlog
 
 def handler(event):
     request_id = 'N/A'
+    future = None
     try:
         payload = event['input']
+        print(f"payload: {payload}")
         request_id = payload['request_id']
         worker_timeout = WORKER_TIMEOUT_FOR_INFERENCE
         work_assignment = 'INFERENCE'
